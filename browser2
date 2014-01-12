@@ -1,0 +1,415 @@
+#!/usr/bin/env python
+
+from gettext import gettext as _
+
+import gobject
+import gtk
+import pango
+import webkit
+
+class BrowserPage(webkit.WebView):
+
+    def __init__(self):
+        webkit.WebView.__init__(self)
+        settings = self.get_settings()
+        settings.set_property('enable-developer-extras', False)
+        settings.set_property('enable-default-context-menu', False)
+
+	settings.set_property('default-encoding', 'utf-8')
+	settings.set_property('enable-private-browsing', True)
+	settings.set_property('enable-html5-local-storage', False)
+
+        # scale other content besides from text as well
+        self.set_full_content_zoom(True)
+	
+class TabLabel(gtk.HBox):
+    """A class for Tab labels"""
+
+    __gsignals__ = {
+        'close': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, (gobject.TYPE_OBJECT,))
+    }
+
+    def __init__(self, title, child):
+        """initialize the tab label"""
+        gtk.HBox.__init__(self, False, 4)
+        self.title = title
+        self.child = child
+        self.label = gtk.Label(title)
+        self.label.props.max_width_chars = 30
+        self.label.set_ellipsize(pango.ELLIPSIZE_MIDDLE)
+        self.label.set_alignment(0.0, 0.5)
+
+        #icon = gtk.image_new_from_stock(gtk.STOCK_ORIENTATION_PORTRAIT, gtk.ICON_SIZE_BUTTON)
+        close_image = gtk.image_new_from_stock(gtk.STOCK_CLOSE, gtk.ICON_SIZE_MENU)
+        close_button = gtk.Button()
+        close_button.set_relief(gtk.RELIEF_NONE)
+        close_button.connect('clicked', self._close_tab, child)
+        close_button.set_image(close_image)
+        #self.pack_start(icon, False, False, 0)
+        self.pack_start(self.label, True, True, 0)
+        self.pack_start(close_button, False, False, 0)
+
+        #self.set_data("label", self.label)
+        self.set_data('close-button', close_button)
+        self.connect('style-set', tab_label_style_set_cb)
+
+    def set_label(self, text):
+        """sets the text of this label"""
+        self.label.set_label(text)
+
+    def _close_tab(self, widget, child):
+        self.emit('close', child)
+
+def tab_label_style_set_cb(tab_label, style):
+    context = tab_label.get_pango_context()
+    metrics = context.get_metrics(tab_label.style.font_desc, context.get_language())
+    char_width = metrics.get_approximate_digit_width()
+    (width, height) = gtk.icon_size_lookup(gtk.ICON_SIZE_MENU)
+    tab_label.set_size_request(10 * pango.PIXELS(char_width) + 2 * width,
+pango.PIXELS(metrics.get_ascent() + metrics.get_descent()) + 4)
+
+class ContentPane(gtk.Notebook):
+
+    __gsignals__ = {
+        'focus-entry': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+	'update-title': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, (gobject.TYPE_OBJECT, gobject.TYPE_STRING)),
+    }
+
+    def __init__(self):
+        """initialize the content pane"""
+        gtk.Notebook.__init__(self)
+        self.props.scrollable = True
+        self.props.homogeneous = True
+	self.set_show_border(False)
+        self.connect('switch-page', self._switch_page)
+
+        self.show_all()
+        self._hovered_uri = None
+
+    def load (self, text):
+        """load the given uri in the current web view"""
+        child = self.get_nth_page(self.get_current_page())
+        view = child.get_child()
+        view.open(text)
+
+    def go_back(self):
+	child = self.get_nth_page(self.get_current_page())
+	view = child.get_child()
+	view.go_back()
+
+    def go_forward(self):
+	child = self.get_nth_page(self.get_current_page())
+	view = child.get_child()
+	view.go_forward()
+
+    def refresh(self):
+	child = self.get_nth_page(self.get_current_page())
+	view = child.get_child()
+	view.reload()
+
+    def zoom_in(self):
+	"""Zoom into the page"""
+	child = self.get_nth_page(self.get_current_page())
+	view = child.get_child()
+	view.zoom_in()
+
+    def zoom_out(self):
+	"""Zoom out of the page"""
+	child = self.get_nth_page(self.get_current_page())
+	view = child.get_child()
+	view.zoom_out()
+
+    def close_current_tab(self):
+	if (self.get_n_pages() > 1):
+		self._close_tab(None, self.get_nth_page(self.get_current_page()))
+
+    def new_tab_with_webview (self, webview):
+        """creates a new tab with the given webview as its child"""
+        self._construct_tab_view(webview)
+
+    def new_tab (self, url=None, show_new=True):
+        """creates a new page in a new tab"""
+
+        browser = BrowserPage()
+        new_tab_number = self._construct_tab_view(browser, url)
+
+        if show_new:
+	    self.set_current_page(new_tab_number)
+	    if not url:
+	        self.emit('focus-entry')
+
+    def _construct_tab_view(self, web_view, url=None):
+
+	scrolled_window = gtk.ScrolledWindow()
+        scrolled_window.props.hscrollbar_policy = gtk.POLICY_AUTOMATIC
+        scrolled_window.props.vscrollbar_policy = gtk.POLICY_AUTOMATIC
+
+        web_view.connect('hovering-over-link', self._hovering_over_link)
+        web_view.connect('load-finished', self._load_finished, scrolled_window)
+        web_view.connect('title-changed', self._title_changed, scrolled_window)
+
+	# no file chooser
+	web_view.connect('run-file-chooser', returntrue)
+
+	# no file transfering
+	web_view.connect('download-requested', returntrue)
+
+	# no printing
+	web_view.connect('print-requested', returntrue)
+
+	web_view.connect('create-web-view', self._new_web_view_request)
+	web_view.connect('button-press-event', self._on_button_press_event)
+        
+        scrolled_window.add(web_view)
+        scrolled_window.show_all()
+
+        # create the tab
+	label = TabLabel(url, scrolled_window)
+        label.connect('close', self._close_tab)
+        label.show_all()
+
+        new_tab_number = self.append_page(scrolled_window, label)
+        self.set_tab_label_packing(scrolled_window, False, True, gtk.PACK_START)
+        self.set_tab_label(scrolled_window, label)
+
+        # hide the tab if there's only one
+        self.set_show_tabs(self.get_n_pages() > 1)
+
+        self.show_all()
+
+        # load the content
+        self._hovered_uri = None
+        if not url:
+            web_view.load_string('', 'text/html', 'utf-8', 'blank')
+        else:
+            web_view.load_uri(url)
+
+	return new_tab_number
+
+    def _get_title(self, webview):
+	title = webview.get_title()
+	if not title:
+	    frame = webview.get_main_frame()
+	    title = frame.props.title
+	    if not title:
+		title = frame.get_uri()
+	return title
+
+    def _update_label(self, page, title):
+	label = self.get_tab_label(page)
+        label.set_label(title)
+
+    def _update_title(self, page):
+	webview = page.get_child()
+	self.emit('update-title', webview, self._get_title(webview))
+
+    def _on_button_press_event(self, widget, event):
+	if event.type == gtk.gdk.BUTTON_PRESS and self._hovered_uri:
+	    if event.button == 2:
+	        self.new_tab(self._hovered_uri, False)
+	        return True
+
+    def _close_tab(self, label, child):
+        page_num = self.page_num(child)
+        if page_num != -1:
+            view = child.get_child()
+            view.destroy()
+            self.remove_page(page_num)
+        self.set_show_tabs(self.get_n_pages() > 1)
+
+    def _switch_page(self, notebook, page, page_num):
+	self._update_title(self.get_nth_page(page_num))
+
+    def _hovering_over_link(self, view, title, uri):
+        self._hovered_uri = uri
+
+    def _title_changed(self, view, frame, title, child):
+	self._update_label(child, title)
+	if self.page_num(child) == self.get_current_page():
+	    self._update_title(child)
+
+    def _load_finished(self, webview, frame, child):
+        title = self._get_title(webview)
+        if title:
+	    self._update_label(child, title)
+	    if title != 'blank' and webview.get_can_focus():
+		webview.grab_focus()
+
+    def _new_web_view_request(self, web_view, web_frame):
+        view = BrowserPage()
+	self.new_tab_with_webview(view)
+        return view
+
+class WebToolbar(gtk.Toolbar):
+
+    __gsignals__ = {
+	"go-back-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+	"go-forward-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+	"go-refresh-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+        "go-home-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+	"zoom-in": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+	"zoom-out": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+        "load-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, (gobject.TYPE_STRING,)),
+        "new-tab-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ())
+    }
+
+    def __init__(self, location_enabled=True, toolbar_enabled=True):
+        gtk.Toolbar.__init__(self)
+
+	self.set_style(gtk.TOOLBAR_ICONS)
+	self.set_icon_size(gtk.ICON_SIZE_SMALL_TOOLBAR)
+
+        self.back_button = gtk.ToolButton(gtk.STOCK_GO_BACK)
+        self.back_button.connect('clicked', lambda x: self.emit('go-back-requested'))
+
+        self.forward_button = gtk.ToolButton(gtk.STOCK_GO_FORWARD)
+        self.forward_button.connect('clicked', lambda x: self.emit('go-forward-requested'))
+
+        refresh_button = gtk.ToolButton(gtk.STOCK_REFRESH)
+        refresh_button.connect('clicked', lambda x: self.emit('go-refresh-requested'))
+
+        home_button = gtk.ToolButton(gtk.STOCK_HOME)
+        home_button.connect('clicked', lambda x: self.emit('go-home-requested'))	
+
+        self.add(self.back_button)
+        self.add(self.forward_button)
+        self.add(refresh_button)
+        self.add(home_button)
+
+	self.add(gtk.SeparatorToolItem())
+
+        # location entry
+        if location_enabled:
+            self._entry = gtk.Entry()
+            self._entry.connect('activate', self._entry_activate_cb)
+            entry_item = gtk.ToolItem()
+            entry_item.set_expand(True)
+            entry_item.add(self._entry)
+            self._entry.show()
+            self.insert(entry_item, -1)
+            entry_item.show()
+	    self.add(gtk.SeparatorToolItem())
+
+        #zoom in/out buttons
+        self.zoom_in_button = gtk.ToolButton(gtk.STOCK_ZOOM_IN)
+        self.zoom_in_button.connect('clicked', lambda x: self.emit('zoom-in'))
+
+	self.zoom_out_button = gtk.ToolButton(gtk.STOCK_ZOOM_OUT)
+	self.zoom_out_button.connect('clicked', lambda x: self.emit('zoom-out'))
+
+	self.add(self.zoom_in_button)
+	self.add(self.zoom_out_button)
+
+	self.add(gtk.SeparatorToolItem())
+
+        # add tab button
+        if toolbar_enabled:
+            addTabButton = gtk.ToolButton(gtk.STOCK_ADD)
+            addTabButton.connect('clicked', lambda x: self.emit('new-tab-requested'))
+            self.insert(addTabButton, -1)
+            addTabButton.show()
+
+    def location_set_text (self, text):
+        self._entry.set_text(text)
+
+    def _entry_activate_cb(self, entry):
+        self.emit('load-requested', entry.props.text)
+        
+class WebBrowser(gtk.Window):
+
+    def __init__(self):
+        gtk.Window.__init__(self)
+
+	self.start_url = 'https://browser2-start.appspot.com/'
+	#options.url or self.configuration.get("start_url", "about:blank")
+
+        self.toolbar = WebToolbar()
+        self.content_tabs = ContentPane()
+
+	self.content_tabs.connect('focus-entry', lambda x: self.toolbar._entry.grab_focus())
+	self.content_tabs.connect('update-title', self._update_title)
+	self.toolbar.connect("go-back-requested", lambda x: self.content_tabs.go_back())
+	self.toolbar.connect("go-forward-requested", lambda x: self.content_tabs.go_forward())
+	self.toolbar.connect("go-refresh-requested", lambda x: self.content_tabs.refresh())
+        self.toolbar.connect("go-home-requested", lambda x: self._go_home())
+	self.toolbar.connect("zoom-in", lambda x: self.content_tabs.zoom_in())
+	self.toolbar.connect("zoom-out", lambda x: self.content_tabs.zoom_out())
+        self.toolbar.connect("new-tab-requested", lambda x: self._new_tab())
+
+        self.toolbar.connect("load-requested", load_requested_cb, self.content_tabs)
+
+        vbox = gtk.VBox(spacing=0)
+        vbox.pack_start(self.toolbar, expand=False, fill=False)
+        vbox.pack_start(self.content_tabs, expand=True, fill=True)
+
+        self.add(vbox)
+        self.set_default_size(800, 600)
+        self.connect('destroy', destroy_cb, self.content_tabs)
+        self.connect('key-press-event', self._key_pressed)
+
+        self.show_all()
+
+        self.content_tabs.new_tab(self.start_url, True)
+
+    def _update_title(self, content_tabs, webview, title):
+	self.set_title(_("%s") % title)
+	frame = webview.get_main_frame()
+	uri = frame.get_uri()
+	if uri:
+	    self.toolbar.location_set_text(uri)
+	self.toolbar.back_button.set_sensitive(webview.can_go_back())
+	self.toolbar.forward_button.set_sensitive(webview.can_go_forward())
+
+    def _key_pressed(self, widget, event):
+        mapping = {
+                   'r': self.content_tabs.refresh,
+                   'w': self.content_tabs.close_current_tab,
+                   't': self._new_tab,
+                   'l': self.toolbar._entry.grab_focus
+#                   Gdk.KEY_f: self._raise_find_dialog
+                   }
+        if event.state & gtk.gdk.CONTROL_MASK and gtk.gdk.keyval_name(event.keyval).lower() in mapping:
+	    mapping[gtk.gdk.keyval_name(event.keyval)]()
+	elif event.state & gtk.gdk.MOD1_MASK:
+	    if gtk.gdk.keyval_name(event.keyval) == 'F4':
+		destroy_cb(self, self.content_tabs)
+
+    def _new_tab(self):
+	self.content_tabs.new_tab()
+
+    def _go_home(self):
+	self.content_tabs.load(self.start_url)
+
+# event handlers
+def load_requested_cb (widget, text, content_pane):
+    if not text:
+        return
+    try:
+        text.index("://")
+    except:
+	if (' ' in text and '/' not in text) or ('.' not in text):
+		text = 'https://www.google.si/search?q=' + text
+	else:
+        	text = "http://" + text
+    content_pane.load(text)
+
+def destroy_cb(window, content_pane):
+    """destroy window resources"""
+    num_pages = content_pane.get_n_pages()
+    while num_pages != -1:
+        child = content_pane.get_nth_page(num_pages)
+        if child:
+            view = child.get_child()
+        num_pages = num_pages - 1
+    window.destroy()
+    gtk.main_quit()
+
+# context menu item callbacks
+
+
+def returntrue(*args):
+    return True
+
+if __name__ == "__main__":
+    webbrowser = WebBrowser()
+    gtk.main()
