@@ -19,6 +19,7 @@ class BrowserPage(webkit.WebView):
     settings.set_property('enable-private-browsing', True)
     settings.set_property('enable-html5-local-storage', False)
     
+    # disable plugins, like Adobe Flash and Java
     settings.set_property('enable-plugins', False)
 
     # scale other content besides from text as well
@@ -98,13 +99,13 @@ class ContentPane(gtk.Notebook):
     browser.connect('load-finished', self._load_finished, scrolled_window)
     browser.connect('hovering-over-link', self._hovering_over_link)
 
-	# no file chooser
+    # disable file chooser
     browser.connect('run-file-chooser', returntrue)
 
-	# no file transfering
+    # disable file transfering (downloading)
     browser.connect('download-requested', returntrue)
 
-	# no printing
+    # disable printing
     browser.connect('print-requested', returntrue)
 
     browser.connect('create-web-view', self._new_web_view_request)
@@ -381,4 +382,3 @@ def returntrue(*args):
 if __name__ == "__main__":
   webbrowser = WebBrowser()
   gtk.main()
-
