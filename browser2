@@ -327,6 +327,10 @@ class WebBrowser(gtk.Window):
     self.add(vbox)
     self.connect('destroy', self.quit)
     self.connect('key-press-event', self._key_pressed)
+    
+    self.icon_theme = gtk.icon_theme_get_default()
+    self.set_icon(self.icon_theme.load_icon("stock_internet", 16, 0))
+    
     self.set_default_size(800, 600)
     
     self.show_all()
