@@ -8,6 +8,11 @@ Features
 - tabs
 - incognito
 
+Requirements
+---------
+- python-gtk2
+- python-webkit
+
 No configuration file, for now.
 
-Default home page could be changed in the source code, see `self.start_url`
+Default home page could be changed in the source code, see `self.start_url` in `__init__`
