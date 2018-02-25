@@ -7,16 +7,19 @@ import gtk
 import pango
 import webkit
 
+def returntrue(*args):
+  return True
+
 class BrowserPage(webkit.WebView):
 
   def __init__(self):
     webkit.WebView.__init__(self)
     settings = self.get_settings()
+    settings.set_property('default-encoding', 'utf-8')
     settings.set_property('enable-developer-extras', False)
     settings.set_property('enable-default-context-menu', False)
-
-    settings.set_property('default-encoding', 'utf-8')
     settings.set_property('enable-private-browsing', True)
+    settings.set_property('enable-html5-database', False)
     settings.set_property('enable-html5-local-storage', False)
     
     # disable plugins, like Adobe Flash and Java
@@ -62,7 +65,7 @@ class TabLabel(gtk.HBox):
     tab_label.set_size_request(10 * pango.PIXELS(char_width) + 2 * width,
 pango.PIXELS(metrics.get_ascent() + metrics.get_descent()) + 4)
 
-class ContentPane(gtk.Notebook):
+class ContentTabs(gtk.Notebook):
 
   __gsignals__ = {
     'focus-entry': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
@@ -71,6 +74,7 @@ class ContentPane(gtk.Notebook):
 
   def __init__(self):
     """initialize the content pane"""
+
     gtk.Notebook.__init__(self)
     self.props.scrollable = True
     self.props.homogeneous = True
@@ -79,6 +83,9 @@ class ContentPane(gtk.Notebook):
 
     self.show_all()
     self._hovered_uri = None
+
+  def verify_url(self, url):
+    return url.find('file://') < 0
     
   def new_tab(self, url = None, show_new = True, web_view = None):
     """Creates a new page in a new tab"""
@@ -125,13 +132,13 @@ class ContentPane(gtk.Notebook):
     self.set_show_tabs(self.get_n_pages() > 1)
     self.show_all()
     
-    if url:
+    if url and self.verify_url(url):
       scrolled_window.url = url
       browser.load_uri(url)
     else:
-      scrolled_window.title = "New Tab"
-      scrolled_window.url = ""
-      label.label.set_label("New Tab")
+      scrolled_window.title = 'New Tab'
+      scrolled_window.url = ''
+      label.label.set_label('New Tab')
     	
     if show_new:
 	  self.set_current_page(new_tab_number)
@@ -167,22 +174,25 @@ class ContentPane(gtk.Notebook):
 
   def zoom_in(self):
     """Zoom into the page"""
+
     child = self.get_nth_page(self.get_current_page())
     view = child.get_child()
     view.zoom_in()
 
   def zoom_out(self):
     """Zoom out of the page"""
+
     child = self.get_nth_page(self.get_current_page())
     view = child.get_child()
     view.zoom_out()
     
-  def load (self, text):
+  def load(self, text):
     """Load the given uri in the current web view"""
-    
-    child = self.get_nth_page(self.get_current_page())
-    view = child.get_child()
-    view.open(text)
+
+    if (self.verify_url(text)):
+      child = self.get_nth_page(self.get_current_page())
+      view = child.get_child()
+      view.open(text)
     
   def _on_button_press_event(self, widget, event):
     if event.type == gtk.gdk.BUTTON_PRESS and self._hovered_uri:
@@ -240,14 +250,14 @@ class ContentPane(gtk.Notebook):
 class WebToolbar(gtk.Toolbar):
 
   __gsignals__ = {
-    "go-back-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
-    "go-forward-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
-    "go-refresh-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
-    "go-home-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
-    "zoom-in-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
-    "zoom-out-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
-    "load-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, (gobject.TYPE_STRING,)),
-    "new-tab-requested": (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ())
+    'go-back-requested': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+    'go-forward-requested': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+    'go-refresh-requested': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+    'go-home-requested': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+    'zoom-in-requested': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+    'zoom-out-requested': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ()),
+    'load-requested': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, (gobject.TYPE_STRING,)),
+    'new-tab-requested': (gobject.SIGNAL_RUN_FIRST, gobject.TYPE_NONE, ())
   }
 
   def __init__(self, location_enabled=True, toolbar_enabled=True):
@@ -305,13 +315,13 @@ class WebBrowser(gtk.Window):
     gtk.Window.__init__(self)
     
     self.start_url = 'https://browser2-start.appspot.com/'
-    
+
+    self.content_tabs = ContentTabs()
     self.toolbar = WebToolbar()
-    self.content_tabs = ContentPane()
-    
+
     self.content_tabs.connect('focus-entry', lambda x: self.toolbar.entry.grab_focus())
     self.content_tabs.connect('update-title', self._update_title)
-    
+
     self.toolbar.connect('new-tab-requested', lambda x: self.content_tabs.new_tab(None, True))
     self.toolbar.connect('go-back-requested', lambda x: self.content_tabs.go_back())
     self.toolbar.connect('go-forward-requested', lambda x: self.content_tabs.go_forward())
@@ -329,10 +339,9 @@ class WebBrowser(gtk.Window):
     self.connect('key-press-event', self._key_pressed)
     
     self.icon_theme = gtk.icon_theme_get_default()
-    self.set_icon(self.icon_theme.load_icon("stock_internet", 16, 0))
-    
-    self.set_default_size(800, 600)
-    
+    self.set_icon(self.icon_theme.load_icon('stock_internet', 16, 0))
+    self.set_default_size(1024, 768)
+
     self.show_all()
     self.content_tabs.new_tab(self.start_url, True)
     
@@ -351,17 +360,17 @@ class WebBrowser(gtk.Window):
     if not text:
       return
     try:
-      text.index("://")
+      text.index('://')
     except:
       if (' ' in text and '/' not in text) or ('.' not in text):
         text = 'https://www.google.si/search?q=' + text
       else:
-        text = "http://" + text
+        text = 'http://' + text
     self.content_tabs.load(text)  
     
   def _update_title(self, notebook, web_view, title, url):
     if not title is None:
-      self.set_title(_("%s") % title)
+      self.set_title(_('%s') % title)
     if not url is None:
       self.toolbar.entry.set_text(url)
     self.toolbar.back_button.set_sensitive(web_view.can_go_back())
@@ -379,10 +388,7 @@ class WebBrowser(gtk.Window):
     elif event.state & gtk.gdk.MOD1_MASK:
       if gtk.gdk.keyval_name(event.keyval) == 'F4':
 		self.quit(self)
-
-def returntrue(*args):
-  return True
   
-if __name__ == "__main__":
+if __name__ == '__main__':
   webbrowser = WebBrowser()
   gtk.main()
